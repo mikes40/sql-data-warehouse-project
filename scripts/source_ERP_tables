@@ -1,13 +1,21 @@
 /*
 =======================================================
-Create Tables for Source ERP (Bronze Schema)
+Create and Populate Tables for Source ERP (Bronze Schema)
 =======================================================
 
 Script Purpose:
-    These scripts create three tables within the 'bronze' schema of our DataWarehouse.
-    The tables are designed to hold raw data extracted from the source ERP system.
-    We are working with three data files, and each corresponding table is created below
-    to prepare for the initial data load and further processing in the data pipeline.
+    This script creates three tables within the 'bronze' schema of our DataWarehouse
+    to store raw data extracted from the source ERP system.
+
+    Following table creation, data from three corresponding CSV files is loaded into 
+    these tables. This step represents the initial ingestion layer in our data pipeline, 
+    where raw source data is staged before any transformations.
+
+Notes:
+    - The tables reflect the structure of the incoming CRM datasets.
+    - Data is loaded using the pgAdmin import functionality.
+    - Ensure the CSV files are unzipped and accessible before running the import.
+
 */
 
 
