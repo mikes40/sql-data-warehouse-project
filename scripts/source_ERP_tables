@@ -1,0 +1,38 @@
+/*
+=======================================================
+Create Tables for Source ERP (Bronze Schema)
+=======================================================
+
+Script Purpose:
+    These scripts create three tables within the 'bronze' schema of our DataWarehouse.
+    The tables are designed to hold raw data extracted from the source ERP system.
+    We are working with three data files, and each corresponding table is created below
+    to prepare for the initial data load and further processing in the data pipeline.
+*/
+
+
+Customer AZ12
+=======================================================
+create table bronze.erp_cust_az12 (
+cid VARCHAR(50),
+bdate DATE,
+gen VARCHAR(50)
+);
+
+
+Local A101
+=======================================================
+create table bronze.erp_loc_a101 (
+cid VARCHAR(50),
+cntry VARCHAR(50)
+);
+
+
+PX Category G1V2
+=======================================================
+create table bronze.erp_px_cat_g1v2 (
+id VARCHAR(50),
+cat VARCHAR(50),
+subcat VARCHAR(50),
+maintenance VARCHAR(50)
+);
