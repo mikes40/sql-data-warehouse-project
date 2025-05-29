@@ -1,0 +1,156 @@
+
+
+/*
+=======================================================
+Stage 1: Data Transformation for Source Bronze.crm_cust_info -  to Silver.crm_cust_info
+=======================================================
+
+Purpose:
+---------
+This transformation script handles initial data cleaning and preparation from 
+the 'bronze' raw layer to the 'silver' refined layer of our Data Warehouse. 
+
+Key Steps:
+----------
+1. De-duplication based on `cst_id`
+2. Trimming unwanted whitespace from string columns
+3. Mapping abbreviated values to full descriptive values
+4. Inserting cleaned records into the 'silver' schema
+*/
+
+/*-------------------------------------------------------
+Step 1: Check for Duplicates in `cst_id`
+-------------------------------------------------------*/
+SELECT 
+    cst_id,
+    COUNT(*)
+FROM bronze.crm_cust_info
+GROUP BY cst_id
+HAVING COUNT(*) > 1 OR cst_id IS NULL;
+
+
+/*-------------------------------------------------------
+Step 2: Investigate a Specific Duplicate Record
+-------------------------------------------------------*/
+SELECT 
+    *
+FROM bronze.crm_cust_info
+WHERE cst_id = 29473;
+
+
+/*-------------------------------------------------------
+Step 3: Use Window Function to Rank by Most Recent Date
+-------------------------------------------------------*/
+SELECT 
+    *,
+    ROW_NUMBER() OVER (PARTITION BY cst_id ORDER BY cst_create_date DESC) AS recent_date
+FROM bronze.crm_cust_info
+WHERE cst_id = 29473;
+
+
+/*-------------------------------------------------------
+Step 4: Deduplicate Entire Table Using Row Number
+-------------------------------------------------------*/
+SELECT *
+FROM (
+    SELECT 
+        *,
+        ROW_NUMBER() OVER (PARTITION BY cst_id ORDER BY cst_create_date DESC) AS recent_date
+    FROM bronze.crm_cust_info
+) ranked
+WHERE recent_date = 1;
+
+
+/*-------------------------------------------------------
+Step 5: Trim Whitespace from String Columns
+-------------------------------------------------------*/
+-- Check for unwanted spaces in first name
+SELECT 
+    cst_firstname
+FROM bronze.crm_cust_info
+WHERE cst_firstname != TRIM(cst_firstname);
+
+
+/*-------------------------------------------------------
+Step 6: Clean and Transform String Columns
+-------------------------------------------------------*/
+SELECT
+    cst_id,
+    cst_key,
+    TRIM(cst_firstname) AS cst_firstname,
+    TRIM(cst_lastname) AS cst_lastname,
+    CASE
+        WHEN UPPER(TRIM(cst_gndr)) = 'F' THEN 'Female'
+        WHEN UPPER(TRIM(cst_gndr)) = 'M' THEN 'Male'
+        ELSE 'n/a'
+    END AS cst_gndr,
+    CASE
+        WHEN UPPER(TRIM(cst_marital_status)) = 'S' THEN 'Single'
+        WHEN UPPER(TRIM(cst_marital_status)) = 'M' THEN 'Married'
+        ELSE 'n/a'
+    END AS cst_marital_status,
+    cst_create_date
+FROM (
+    SELECT 
+        *,
+        ROW_NUMBER() OVER (PARTITION BY cst_id ORDER BY cst_create_date DESC) AS recent_date
+    FROM bronze.crm_cust_info
+) ranked
+WHERE recent_date = 1;
+
+
+/*-------------------------------------------------------
+Step 7: Load Cleaned Data into Silver Table
+-------------------------------------------------------*/
+INSERT INTO silver.crm_cust_info (
+    cst_id,
+    cst_key,
+    cst_firstname,
+    cst_lastname,
+    cst_marital_status,
+    cst_gndr,
+    cst_create_date
+)
+SELECT
+    cst_id,
+    cst_key,
+    TRIM(cst_firstname),
+    TRIM(cst_lastname),
+    CASE
+        WHEN UPPER(TRIM(cst_marital_status)) = 'S' THEN 'Single'
+        WHEN UPPER(TRIM(cst_marital_status)) = 'M' THEN 'Married'
+        ELSE 'n/a'
+    END,
+    CASE
+        WHEN UPPER(TRIM(cst_gndr)) = 'F' THEN 'Female'
+        WHEN UPPER(TRIM(cst_gndr)) = 'M' THEN 'Male'
+        ELSE 'n/a'
+    END,
+    cst_create_date
+FROM (
+    SELECT 
+        *,
+        ROW_NUMBER() OVER (PARTITION BY cst_id ORDER BY cst_create_date DESC) AS recent_date
+    FROM bronze.crm_cust_info
+) ranked
+WHERE recent_date = 1;
+
+
+/*-------------------------------------------------------
+Step 8: Validate Silver Table
+-------------------------------------------------------*/
+-- Check for duplicates again
+SELECT 
+    cst_id,
+    COUNT(*)
+FROM silver.crm_cust_info
+GROUP BY cst_id
+HAVING COUNT(*) > 1 OR cst_id IS NULL;
+
+-- Check for trailing/leading spaces (should return 0 results)
+SELECT 
+    *
+FROM silver.crm_cust_info
+WHERE cst_firstname != TRIM(cst_firstname)
+   OR cst_lastname != TRIM(cst_lastname);
+
