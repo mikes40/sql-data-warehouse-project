@@ -1,0 +1,145 @@
+-- =====================================================================
+-- CRM_prd_info Transformation Script | Bronze ➝ Silver
+-- =====================================================================
+-- Purpose: Cleans and transforms the CRM Product Info table, including:
+-- - Validations (duplicates, format, nulls)
+-- - Key splitting and remapping
+-- - Type casting, trimming, and logic-driven replacements
+-- - Load into silver layer
+-- =====================================================================
+
+
+-- 1. Drop and recreate the silver layer target table
+DROP TABLE IF EXISTS silver.crm_prd_info;
+
+CREATE TABLE silver.crm_prd_info (
+    prd_id INT,
+    prd_key VARCHAR(50),
+    cat_id VARCHAR(50),
+    prd_nm VARCHAR(50),
+    prd_cost INT,
+    prd_line VARCHAR(50),
+    prd_start_dt DATE,
+    prd_end_dt DATE,
+    dwh_create_date DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+
+-- 2. Validate Primary Key Column (prd_id): Check for duplicates
+SELECT prd_id, COUNT(*) AS occurrences
+FROM bronze.crm_prd_info
+GROUP BY prd_id
+HAVING COUNT(*) > 1;
+
+-- ✅ Expecting 0 duplicates — Primary Key looks valid
+
+
+-- 3. Extract and Format Category ID from prd_key
+-- Format to match bronze.erp_px_cat_g1v2 structure (uses underscores)
+SELECT REPLACE(SUBSTRING(prd_key, 1, 5), '-', '_') AS cat_id
+FROM bronze.crm_prd_info;
+
+-- 4. Check if any extracted cat_ids are missing in erp_px_cat_g1v2
+SELECT DISTINCT cat_id
+FROM (
+    SELECT REPLACE(SUBSTRING(prd_key, 1, 5), '-', '_') AS cat_id
+    FROM bronze.crm_prd_info
+) a
+WHERE cat_id NOT IN (
+    SELECT id FROM bronze.erp_px_cat_g1v2
+);
+
+-- ✅ Only 1 unmatched value — acceptable
+
+
+-- 5. Extract and clean second part of prd_key → actual prd_id
+SELECT TRIM(SUBSTRING(prd_key, 7, LENGTH(prd_key))) AS prd_id
+FROM bronze.crm_prd_info;
+
+
+-- 6. Clean Product Name (prd_nm): Remove leading/trailing spaces
+SELECT TRIM(prd_nm) AS prd_nm
+FROM bronze.crm_prd_info;
+
+
+-- 7. Clean Product Cost (prd_cost)
+-- Replace NULLs and invalid (<1) values with 0
+SELECT prd_cost
+FROM bronze.crm_prd_info
+WHERE prd_cost < 1 OR prd_cost IS NULL;
+
+-- Replace NULLs:
+SELECT COALESCE(prd_cost, 0) AS prd_cost
+FROM bronze.crm_prd_info;
+
+
+-- 8. Standardize Product Line (prd_line): Use CASE mapping
+SELECT
+  CASE UPPER(TRIM(prd_line))
+    WHEN 'M' THEN 'Mountain'
+    WHEN 'R' THEN 'Road'
+    WHEN 'S' THEN 'Other Sales'
+    WHEN 'T' THEN 'Touring'
+    ELSE 'n/a'
+  END AS prd_line
+FROM bronze.crm_prd_info;
+
+
+-- 9. Validate and Fix Start/End Dates
+-- Check for start dates > end dates
+SELECT *
+FROM bronze.crm_prd_info
+WHERE prd_start_dt > prd_end_dt;
+
+-- Use LEAD to generate corrected end dates (pending business confirmation)
+SELECT prd_key,
+  CAST(prd_start_dt AS DATE) AS prd_start_dt,
+  CAST(LEAD(prd_start_dt) OVER (PARTITION BY prd_key ORDER BY prd_start_dt) - 1 AS DATE) AS prd_end_dt
+FROM bronze.crm_prd_info;
+
+
+-- =====================================================================
+-- 10. Final Transformation: Combine all cleaned/transformed columns
+-- =====================================================================
+
+WITH transformed_data AS (
+  SELECT
+    prd_id,
+    TRIM(prd_key) AS prd_key,
+    TRIM(REPLACE(SUBSTRING(prd_key, 1, 5), '-', '_')) AS cat_id,
+    TRIM(SUBSTRING(prd_key, 7, LENGTH(prd_key))) AS split_prd_id,
+    TRIM(prd_nm) AS prd_nm,
+    COALESCE(prd_cost, 0) AS prd_cost,
+    CASE UPPER(TRIM(prd_line))
+      WHEN 'M' THEN 'Mountain'
+      WHEN 'R' THEN 'Road'
+      WHEN 'S' THEN 'Other Sales'
+      WHEN 'T' THEN 'Touring'
+      ELSE 'n/a'
+    END AS prd_line,
+    CAST(prd_start_dt AS DATE) AS prd_start_dt,
+    CAST(LEAD(prd_start_dt) OVER (PARTITION BY prd_key ORDER BY prd_start_dt) - 1 AS DATE) AS prd_end_dt
+  FROM bronze.crm_prd_info
+)
+
+-- 11. Load into Silver Layer
+INSERT INTO silver.crm_prd_info (
+    prd_id,
+    prd_key,
+    cat_id,
+    prd_nm,
+    prd_cost,
+    prd_line,
+    prd_start_dt,
+    prd_end_dt
+)
+SELECT
+    prd_id,
+    prd_key,
+    cat_id,
+    prd_nm,
+    prd_cost,
+    prd_line,
+    prd_start_dt,
+    prd_end_dt
+FROM transformed_data;
