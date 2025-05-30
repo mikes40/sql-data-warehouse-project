@@ -1,0 +1,270 @@
+-- =====================================================================
+-- CRM_sales_details Transformation Script | Bronze ➝ Silver
+-- =====================================================================
+-- Purpose: Cleans and transforms the CRM Sales Details table, including:
+-- - Validation of keys and relationships
+-- - Date conversions and sanity checks
+-- - Business rule enforcement for sales, price, and quantity
+-- - Data standardisation and type corrections
+-- - Load into silver layer with added DWH timestamp
+-- =====================================================================
+
+
+-- =====================================================================
+-- Initial Checks: Full data scan
+-- =====================================================================
+SELECT * 
+FROM bronze.crm_sales_details;
+
+
+-- =====================================================================
+-- Validation: Check for untrimmed order numbers
+-- =====================================================================
+-- Expected result: 0 rows (all order numbers should be trimmed)
+SELECT sls_ord_num
+FROM bronze.crm_sales_details
+WHERE sls_ord_num NOT IN (
+  SELECT TRIM(sls_ord_num) FROM bronze.crm_sales_details
+);
+
+
+-- =====================================================================
+-- Validation: Check product keys against silver.crm_prd_info
+-- =====================================================================
+-- Expected result: 0 rows (all product keys should exist in reference table)
+SELECT sls_prd_key
+FROM bronze.crm_sales_details
+WHERE sls_prd_key NOT IN (
+  SELECT prd_key FROM silver.crm_prd_info
+);
+
+
+-- =====================================================================
+-- Validation: Check customer IDs against silver.crm_cust_info
+-- =====================================================================
+-- Expected result: 0 rows (all customer IDs should exist in reference table)
+SELECT sls_cust_id
+FROM bronze.crm_sales_details
+WHERE sls_cust_id NOT IN (
+  SELECT cst_id FROM silver.crm_cust_info
+);
+
+
+-- =====================================================================
+-- Validation: Order, Ship, Due Dates – Format and Range
+-- =====================================================================
+-- Expected result: 0 rows (check all dates are 8-digit numeric in valid range)
+SELECT sls_order_dt
+FROM bronze.crm_sales_details
+WHERE CHAR_LENGTH(sls_order_dt::TEXT) < 8 
+   OR sls_order_dt > 20500101
+   OR sls_order_dt < 19000101;
+
+
+-- =====================================================================
+-- Transform: Replace invalid dates (0 or <8 chars) with NULL
+-- =====================================================================
+SELECT 
+  CASE 
+    WHEN sls_order_dt = 0 OR CHAR_LENGTH(sls_order_dt::TEXT) < 8 THEN NULL
+    ELSE CAST(CAST(sls_order_dt AS VARCHAR) AS DATE) 
+  END AS sls_order_dt
+FROM bronze.crm_sales_details;
+
+
+-- =====================================================================
+-- Repeat Transformation for sls_ship_dt and sls_due_dt
+-- =====================================================================
+-- Apply same logic as above
+
+SELECT 
+  CASE 
+    WHEN sls_ship_dt = 0 OR CHAR_LENGTH(sls_ship_dt::TEXT) < 8 THEN NULL
+    ELSE CAST(CAST(sls_ship_dt AS VARCHAR) AS DATE) 
+  END AS sls_ship_dt,
+  CASE 
+    WHEN sls_due_dt = 0 OR CHAR_LENGTH(sls_due_dt::TEXT) < 8 THEN NULL
+    ELSE CAST(CAST(sls_due_dt AS VARCHAR) AS DATE) 
+  END AS sls_due_dt
+FROM bronze.crm_sales_details;
+
+
+-- =====================================================================
+-- Validation: Date Logic (Order Date should be ≤ Ship/Due Dates)
+-- =====================================================================
+-- Expected result: 0 rows
+SELECT *
+FROM bronze.crm_sales_details
+WHERE sls_order_dt > sls_ship_dt 
+   OR sls_order_dt > sls_due_dt
+   OR sls_ship_dt > sls_due_dt;
+
+
+-- =====================================================================
+-- Business Rule Check: Sales = Quantity × Price
+-- =====================================================================
+-- Conditions: No negative or null values; all derived correctly
+SELECT 
+  sls_sales,
+  sls_quantity,
+  sls_price
+FROM bronze.crm_sales_details
+WHERE sls_sales != sls_quantity * sls_price
+   OR sls_sales IS NULL
+   OR sls_quantity IS NULL
+   OR sls_price IS NULL;
+
+
+-- =====================================================================
+-- Transformation Rule 1: Derive sales if missing or incorrect
+-- =====================================================================
+SELECT DISTINCT
+  CASE
+    WHEN sls_sales <= 0 OR sls_sales IS NULL 
+      OR sls_sales != sls_quantity * ABS(sls_price) 
+    THEN sls_quantity * ABS(sls_price)
+    ELSE sls_sales
+  END AS sls_sales,
+  sls_quantity,
+  sls_price
+FROM bronze.crm_sales_details
+WHERE sls_sales != sls_quantity * sls_price
+   OR sls_sales IS NULL
+   OR sls_quantity IS NULL
+   OR sls_price IS NULL
+   OR sls_sales = 0
+   OR sls_quantity = 0
+   OR sls_price = 0;
+
+
+-- =====================================================================
+-- Transformation Rule 2: Derive price if null or 0
+-- =====================================================================
+SELECT DISTINCT
+  sls_sales AS old_sls_sales,
+  CASE
+    WHEN sls_sales <= 0 OR sls_sales IS NULL 
+      OR sls_sales != sls_quantity * ABS(sls_price)
+    THEN sls_quantity * ABS(sls_price)
+    ELSE sls_sales
+  END AS sls_sales,
+  sls_price AS old_sls_price,
+  CASE
+    WHEN sls_price = 0 OR sls_price IS NULL 
+    THEN sls_sales / NULLIF(sls_quantity, 0)
+    ELSE ABS(sls_price)
+  END AS sls_price,
+  sls_quantity
+FROM bronze.crm_sales_details
+WHERE sls_sales != sls_quantity * sls_price
+   OR sls_sales IS NULL
+   OR sls_quantity IS NULL
+   OR sls_price IS NULL
+   OR sls_sales = 0
+   OR sls_quantity = 0
+   OR sls_price = 0;
+
+
+-- =====================================================================
+-- Final Select: Prepare Clean Data for Silver Layer
+-- =====================================================================
+SELECT 
+  TRIM(sls_ord_num),
+  TRIM(sls_prd_key),
+  sls_cust_id,
+  CASE 
+    WHEN sls_order_dt = 0 OR CHAR_LENGTH(sls_order_dt::TEXT) < 8 THEN NULL
+    ELSE CAST(CAST(sls_order_dt AS VARCHAR) AS DATE) 
+  END AS sls_order_dt,
+  CASE 
+    WHEN sls_ship_dt = 0 OR CHAR_LENGTH(sls_ship_dt::TEXT) < 8 THEN NULL
+    ELSE CAST(CAST(sls_ship_dt AS VARCHAR) AS DATE) 
+  END AS sls_ship_dt,
+  CASE 
+    WHEN sls_due_dt = 0 OR CHAR_LENGTH(sls_due_dt::TEXT) < 8 THEN NULL
+    ELSE CAST(CAST(sls_due_dt AS VARCHAR) AS DATE) 
+  END AS sls_due_dt,
+  CASE
+    WHEN sls_sales <= 0 OR sls_sales IS NULL 
+      OR sls_sales != sls_quantity * ABS(sls_price) 
+    THEN sls_quantity * ABS(sls_price)
+    ELSE sls_sales
+  END AS sls_sales,
+  sls_quantity,
+  CASE
+    WHEN sls_price = 0 OR sls_price IS NULL 
+    THEN sls_sales / NULLIF(sls_quantity, 0)
+    ELSE ABS(sls_price)
+  END AS sls_price
+FROM bronze.crm_sales_details;
+
+
+-- =====================================================================
+-- DDL: Create Silver Table Structure
+-- =====================================================================
+DROP TABLE IF EXISTS silver.crm_sales_details;
+CREATE TABLE silver.crm_sales_details (
+  sls_ord_num VARCHAR(50),
+  sls_prd_key VARCHAR(50),
+  sls_cust_id INT,
+  sls_order_dt DATE,
+  sls_ship_dt DATE,
+  sls_due_dt DATE,
+  sls_sales INT,
+  sls_quantity INT,
+  sls_price INT,
+  dwh_create_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+
+-- =====================================================================
+-- Final Load into Silver Table
+-- =====================================================================
+INSERT INTO silver.crm_sales_details (
+  sls_ord_num,
+  sls_prd_key,
+  sls_cust_id,
+  sls_order_dt,
+  sls_ship_dt,
+  sls_due_dt,
+  sls_sales,
+  sls_quantity,
+  sls_price
+)
+SELECT 
+  TRIM(sls_ord_num),
+  TRIM(sls_prd_key),
+  sls_cust_id,
+  CASE 
+    WHEN sls_order_dt = 0 OR CHAR_LENGTH(sls_order_dt::TEXT) < 8 THEN NULL
+    ELSE CAST(CAST(sls_order_dt AS VARCHAR) AS DATE) 
+  END,
+  CASE 
+    WHEN sls_ship_dt = 0 OR CHAR_LENGTH(sls_ship_dt::TEXT) < 8 THEN NULL
+    ELSE CAST(CAST(sls_ship_dt AS VARCHAR) AS DATE) 
+  END,
+  CASE 
+    WHEN sls_due_dt = 0 OR CHAR_LENGTH(sls_due_dt::TEXT) < 8 THEN NULL
+    ELSE CAST(CAST(sls_due_dt AS VARCHAR) AS DATE) 
+  END,
+  CASE
+    WHEN sls_sales <= 0 OR sls_sales IS NULL 
+      OR sls_sales != sls_quantity * ABS(sls_price) 
+    THEN sls_quantity * ABS(sls_price)
+    ELSE sls_sales
+  END,
+  sls_quantity,
+  CASE
+    WHEN sls_price = 0 OR sls_price IS NULL 
+    THEN sls_sales / NULLIF(sls_quantity, 0)
+    ELSE ABS(sls_price)
+  END
+FROM bronze.crm_sales_details;
+
+
+-- =====================================================================
+-- Validation: Silver Table Test Query
+-- =====================================================================
+SELECT * 
+FROM silver.crm_sales_details
+WHERE sls_quantity > 1;
