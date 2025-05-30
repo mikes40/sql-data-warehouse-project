@@ -1,0 +1,114 @@
+-- =====================================================================
+-- erp_cust_az12 Transformation Script | Bronze ➝ Silver
+-- =====================================================================
+-- Purpose: Cleans and transforms the ERP Customer AZ12 table, including:
+-- - CID standardization (removing 'NAS' prefix)
+-- - Birth date validation (filtering out future dates)
+-- - Gender field standardization (to 'Male'/'Female'/'n/a')
+-- - Load into silver layer
+-- =====================================================================
+
+-- =====================================================================
+-- Initial Data Exploration
+-- =====================================================================
+-- Check sample data and structure
+SELECT * FROM bronze.erp_cust_az12 LIMIT 100;
+
+
+-- =====================================================================
+-- CID Transformation: Remove 'NAS' prefix and trim whitespace
+-- =====================================================================
+-- Business Rule: CID links to silver.crm_cust_info.cst_id which doesn't have 'NAS' prefix
+SELECT 
+    CASE
+        WHEN cid LIKE 'NAS%' THEN TRIM(SUBSTRING(cid, 4, 100))
+        ELSE TRIM(cid)
+    END AS transformed_cid,
+    cid AS original_cid
+FROM bronze.erp_cust_az12
+LIMIT 100;
+
+
+-- =====================================================================
+-- Birth Date Validation: Filter invalid future dates
+-- =====================================================================
+-- Business Rule: Dates over 100 years old are kept, future dates are nullified
+-- First check for invalid dates
+SELECT 
+    COUNT(*) AS invalid_date_count
+FROM bronze.erp_cust_az12
+WHERE bdate > CURRENT_TIMESTAMP OR bdate < '1921-01-01';
+
+-- Transformation logic preview
+SELECT 
+    CASE
+        WHEN bdate > CURRENT_TIMESTAMP THEN NULL
+        ELSE bdate
+    END AS transformed_bdate,
+    bdate AS original_bdate
+FROM bronze.erp_cust_az12
+LIMIT 100;
+
+
+-- =====================================================================
+-- Gender Field Standardization
+-- =====================================================================
+-- First examine distinct values
+SELECT 
+    DISTINCT gen
+FROM bronze.erp_cust_az12;
+
+-- Transformation logic preview
+SELECT 
+    CASE
+        WHEN UPPER(TRIM(gen)) IN ('F','FEMALE') THEN 'Female'
+        WHEN UPPER(TRIM(gen)) IN ('M','MALE') THEN 'Male'
+        ELSE 'n/a'
+    END AS transformed_gender,
+    gen AS original_gender
+FROM bronze.erp_cust_az12
+LIMIT 100;
+
+
+-- =====================================================================
+-- Final Transformation Query
+-- =====================================================================
+INSERT INTO silver.erp_cust_az12 (
+    cid,
+    bdate,
+    gen
+)
+SELECT 
+    CASE
+        WHEN cid LIKE 'NAS%' THEN TRIM(SUBSTRING(cid, 4, 100))
+        ELSE TRIM(cid)
+    END AS cid,
+    CASE
+        WHEN bdate > CURRENT_TIMESTAMP THEN NULL
+        ELSE bdate
+    END AS bdate,
+    CASE
+        WHEN UPPER(TRIM(gen)) IN ('F','FEMALE') THEN 'Female'
+        WHEN UPPER(TRIM(gen)) IN ('M','MALE') THEN 'Male'
+        ELSE 'n/a'
+    END AS gen
+FROM bronze.erp_cust_az12;
+
+
+-- =====================================================================
+-- Post-Load Validation
+-- =====================================================================
+-- Check record counts match
+SELECT 
+    (SELECT COUNT(*) FROM bronze.erp_cust_az12) AS bronze_count,
+    (SELECT COUNT(*) FROM silver.erp_cust_az12) AS silver_count;
+
+-- Sample check of transformed data
+SELECT * FROM silver.erp_cust_az12 LIMIT 100;
+
+-- Check gender distribution
+SELECT 
+    gen,
+    COUNT(*) AS count
+FROM silver.erp_cust_az12
+GROUP BY gen;
