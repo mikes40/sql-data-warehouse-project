@@ -1,0 +1,117 @@
+-- =====================================================================
+-- erp_px_cat_g1v2 Transformation Script | Bronze ➝ Silver
+-- =====================================================================
+-- Purpose: Cleans and loads the ERP Product Category table with:
+-- - Null value checks for all columns
+-- - Whitespace trimming for all string fields
+-- - Basic data quality validation
+-- - Load into silver layer
+-- =====================================================================
+
+-- =====================================================================
+-- Initial Data Exploration
+-- =====================================================================
+-- Check sample data and structure
+SELECT * FROM bronze.erp_px_cat_g1v2 LIMIT 100;
+
+
+-- =====================================================================
+-- Column Validation: ID Field
+-- =====================================================================
+-- Check for null values in ID
+SELECT COUNT(*) AS null_id_count
+FROM bronze.erp_px_cat_g1v2
+WHERE id IS NULL;
+
+-- Check for untrimmed values in ID
+SELECT COUNT(*) AS untrimmed_id_count
+FROM bronze.erp_px_cat_g1v2
+WHERE id != TRIM(id);
+
+
+-- =====================================================================
+-- Column Validation: Category Field
+-- =====================================================================
+-- Check for null values in category
+SELECT COUNT(*) AS null_cat_count
+FROM bronze.erp_px_cat_g1v2
+WHERE cat IS NULL;
+
+-- Check for untrimmed values in category
+SELECT COUNT(*) AS untrimmed_cat_count
+FROM bronze.erp_px_cat_g1v2
+WHERE cat != TRIM(cat);
+
+
+-- =====================================================================
+-- Column Validation: Subcategory Field
+-- =====================================================================
+-- Check for null values in subcategory
+SELECT COUNT(*) AS null_subcat_count
+FROM bronze.erp_px_cat_g1v2
+WHERE subcat IS NULL;
+
+-- Check for untrimmed values in subcategory
+SELECT COUNT(*) AS untrimmed_subcat_count
+FROM bronze.erp_px_cat_g1v2
+WHERE subcat != TRIM(subcat);
+
+
+-- =====================================================================
+-- Column Validation: Maintenance Field
+-- =====================================================================
+-- Check for null values in maintenance
+SELECT COUNT(*) AS null_maintenance_count
+FROM bronze.erp_px_cat_g1v2
+WHERE maintenance IS NULL;
+
+-- Check for untrimmed values in maintenance
+SELECT COUNT(*) AS untrimmed_maintenance_count
+FROM bronze.erp_px_cat_g1v2
+WHERE maintenance != TRIM(maintenance);
+
+
+-- =====================================================================
+-- Final Transformation Query
+-- =====================================================================
+INSERT INTO silver.erp_px_cat_g1v2 (
+    id,
+    cat,
+    subcat,
+    maintenance
+)
+SELECT 
+    TRIM(id) AS id,
+    TRIM(cat) AS cat,
+    TRIM(subcat) AS subcat,
+    TRIM(maintenance) AS maintenance
+FROM bronze.erp_px_cat_g1v2;
+
+
+-- =====================================================================
+-- Post-Load Validation
+-- =====================================================================
+-- Check record counts match
+SELECT 
+    (SELECT COUNT(*) FROM bronze.erp_px_cat_g1v2) AS bronze_count,
+    (SELECT COUNT(*) FROM silver.erp_px_cat_g1v2) AS silver_count;
+
+-- Sample check of transformed data
+SELECT * FROM silver.erp_px_cat_g1v2 LIMIT 100;
+
+-- Check for any remaining whitespace issues
+SELECT 
+    COUNT(*) AS remaining_whitespace_issues
+FROM silver.erp_px_cat_g1v2
+WHERE id != TRIM(id)
+   OR cat != TRIM(cat)
+   OR subcat != TRIM(subcat)
+   OR maintenance != TRIM(maintenance);
+
+-- Check null counts in silver layer
+SELECT
+    COUNT(CASE WHEN id IS NULL THEN 1 END) AS null_ids,
+    COUNT(CASE WHEN cat IS NULL THEN 1 END) AS null_cats,
+    COUNT(CASE WHEN subcat IS NULL THEN 1 END) AS null_subcats,
+    COUNT(CASE WHEN maintenance IS NULL THEN 1 END) AS null_maintenance
+FROM silver.erp_px_cat_g1v2;
