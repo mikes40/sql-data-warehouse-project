@@ -1,0 +1,88 @@
+-- =====================================================================
+-- erp_loc_a101 Transformation Script | Bronze ➝ Silver
+-- =====================================================================
+-- Purpose: Cleans and transforms the ERP Location A101 table, including:
+-- - CID standardization (removing hyphens to match silver.crm_cust_info format)
+-- - Country field standardization (full country names, handling nulls/empties)
+-- - Load into silver layer
+-- =====================================================================
+
+-- =====================================================================
+-- Initial Data Exploration
+-- =====================================================================
+-- Check sample data and structure
+SELECT * FROM bronze.erp_loc_a101 LIMIT 100;
+
+
+-- =====================================================================
+-- CID Transformation: Remove hyphens to match silver.crm_cust_info format
+-- =====================================================================
+-- Business Rule: cst_key in silver.crm_cust_info has no hyphens after 'AW'
+SELECT 
+    REPLACE(cid, '-', '') AS transformed_cid,
+    cid AS original_cid
+FROM bronze.erp_loc_a101
+LIMIT 100;
+
+
+-- =====================================================================
+-- Country Field Standardization
+-- =====================================================================
+-- First examine distinct values
+SELECT 
+    DISTINCT cntry
+FROM bronze.erp_loc_a101;
+
+-- Transformation logic preview
+SELECT 
+    DISTINCT cntry AS original_country,
+    CASE
+        WHEN TRIM(cntry) IS NULL OR TRIM(cntry) = '' THEN 'n/a'
+        WHEN TRIM(cntry) = 'DE' THEN 'Germany'
+        WHEN TRIM(cntry) IN ('US', 'USA') THEN 'United States'
+        ELSE TRIM(cntry)
+    END AS transformed_country
+FROM bronze.erp_loc_a101
+ORDER BY transformed_country;
+
+
+-- =====================================================================
+-- Final Transformation Query
+-- =====================================================================
+INSERT INTO silver.erp_loc_a101 (
+    cid,
+    cntry
+)
+SELECT 
+    REPLACE(cid, '-', '') AS cid,
+    CASE
+        WHEN TRIM(cntry) IS NULL OR TRIM(cntry) = '' THEN 'n/a'
+        WHEN TRIM(cntry) = 'DE' THEN 'Germany'
+        WHEN TRIM(cntry) IN ('US', 'USA') THEN 'United States'
+        ELSE TRIM(cntry)
+    END AS cntry
+FROM bronze.erp_loc_a101;
+
+
+-- =====================================================================
+-- Post-Load Validation
+-- =====================================================================
+-- Check record counts match
+SELECT 
+    (SELECT COUNT(*) FROM bronze.erp_loc_a101) AS bronze_count,
+    (SELECT COUNT(*) FROM silver.erp_loc_a101) AS silver_count;
+
+-- Sample check of transformed data
+SELECT * FROM silver.erp_loc_a101 LIMIT 100;
+
+-- Check country distribution
+SELECT 
+    cntry,
+    COUNT(*) AS record_count
+FROM silver.erp_loc_a101
+GROUP BY cntry
+ORDER BY record_count DESC;
+
+-- Verify specific country transformations
+SELECT * FROM silver.erp_loc_a101
+WHERE cntry IN ('United States', 'Germany', 'n/a');
