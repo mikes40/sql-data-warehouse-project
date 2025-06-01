@@ -1,0 +1,128 @@
+-- --------------------------------------------------
+-- GOLD LAYER: Customer Object
+-- --------------------------------------------------
+-- Goal:
+-- Create a consolidated Customer Object using Silver Layer sources.
+-- Join customer information from multiple sources, deduplicate,
+-- resolve data conflicts, and create a customer dimension view.
+-- --------------------------------------------------
+
+-- STEP 1: Join all customer info tables
+-- Master Table: silver.crm_cust_info
+-- Joined Tables: silver.erp_cust_az12, silver.erp_loc_a101
+
+-- Base Join Query
+SELECT 
+    ci.cst_id,
+    ci.cst_key,
+    ci.cst_firstname,
+    ci.cst_lastname,
+    ci.cst_gndr,
+    la.cntry,
+    ci.cst_marital_status,
+    ca.gen,
+    ca.bdate,
+    ci.cst_create_date
+FROM silver.crm_cust_info ci
+LEFT JOIN silver.erp_cust_az12 ca ON ci.cst_key = ca.cid
+LEFT JOIN silver.erp_loc_a101 la ON ci.cst_key = la.cid;
+
+-- STEP 2: Duplication Check
+-- Ensures no duplication of cst_id after joins
+
+SELECT cst_id, COUNT(*)
+FROM (
+    SELECT 
+        ci.cst_id
+    FROM silver.crm_cust_info ci
+    LEFT JOIN silver.erp_cust_az12 ca ON ci.cst_key = ca.cid
+    LEFT JOIN silver.erp_loc_a101 la ON ci.cst_key = la.cid
+) sub
+GROUP BY cst_id
+HAVING COUNT(*) > 1;
+
+-- Expected Result: 0 rows — no duplicates.
+
+-- STEP 3: Gender Resolution
+-- We have two gender columns: ci.cst_gndr and ca.gen
+-- Assume ci.cst_gndr is the preferred source
+-- Use COALESCE to handle NULLs
+
+SELECT 
+    ci.cst_id,
+    ci.cst_key,
+    ci.cst_firstname,
+    ci.cst_lastname,
+    la.cntry,
+    ci.cst_marital_status,
+    CASE 
+        WHEN ci.cst_gndr IS NOT NULL AND ci.cst_gndr != 'n/a' THEN ci.cst_gndr
+        ELSE COALESCE(ca.gen, 'n/a')
+    END AS gender,
+    ca.bdate,
+    ci.cst_create_date
+FROM silver.crm_cust_info ci
+LEFT JOIN silver.erp_cust_az12 ca ON ci.cst_key = ca.cid
+LEFT JOIN silver.erp_loc_a101 la ON ci.cst_key = la.cid;
+
+-- STEP 4: Rename Columns to User-Friendly Names
+
+SELECT 
+    ci.cst_id AS customer_id,
+    ci.cst_key AS customer_number,
+    ci.cst_firstname AS first_name,
+    ci.cst_lastname AS last_name,
+    la.cntry AS country,
+    ci.cst_marital_status AS marital_status,
+    CASE 
+        WHEN ci.cst_gndr IS NOT NULL AND ci.cst_gndr != 'n/a' THEN ci.cst_gndr
+        ELSE COALESCE(ca.gen, 'n/a')
+    END AS gender,
+    ca.bdate AS birthdate,
+    ci.cst_create_date AS create_date
+FROM silver.crm_cust_info ci
+LEFT JOIN silver.erp_cust_az12 ca ON ci.cst_key = ca.cid
+LEFT JOIN silver.erp_loc_a101 la ON ci.cst_key = la.cid;
+
+-- STEP 5: Add Surrogate Key (Customer_Key)
+-- Use ROW_NUMBER as a surrogate dimension key
+
+SELECT 
+    ROW_NUMBER() OVER (ORDER BY ci.cst_id) AS customer_key,
+    ci.cst_id AS customer_id,
+    ci.cst_key AS customer_number,
+    ci.cst_firstname AS first_name,
+    ci.cst_lastname AS last_name,
+    la.cntry AS country,
+    ci.cst_marital_status AS marital_status,
+    CASE 
+        WHEN ci.cst_gndr IS NOT NULL AND ci.cst_gndr != 'n/a' THEN ci.cst_gndr
+        ELSE COALESCE(ca.gen, 'n/a')
+    END AS gender,
+    ca.bdate AS birthdate,
+    ci.cst_create_date AS create_date
+FROM silver.crm_cust_info ci
+LEFT JOIN silver.erp_cust_az12 ca ON ci.cst_key = ca.cid
+LEFT JOIN silver.erp_loc_a101 la ON ci.cst_key = la.cid;
+
+-- STEP 6: Create Gold Layer View
+-- Finalized Dimensional View in DWH
+
+CREATE OR REPLACE VIEW gold.dim_customers AS
+SELECT 
+    ROW_NUMBER() OVER (ORDER BY ci.cst_id) AS customer_key,
+    ci.cst_id AS customer_id,
+    ci.cst_key AS customer_number,
+    ci.cst_firstname AS first_name,
+    ci.cst_lastname AS last_name,
+    la.cntry AS country,
+    ci.cst_marital_status AS marital_status,
+    CASE 
+        WHEN ci.cst_gndr IS NOT NULL AND ci.cst_gndr != 'n/a' THEN ci.cst_gndr
+        ELSE COALESCE(ca.gen, 'n/a')
+    END AS gender,
+    ca.bdate AS birthdate,
+    ci.cst_create_date AS create_date
+FROM silver.crm_cust_info ci
+LEFT JOIN silver.erp_cust_az12 ca ON ci.cst_key = ca.cid
+LEFT JOIN silver.erp_loc_a101 la ON ci.cst_key = la.cid;
