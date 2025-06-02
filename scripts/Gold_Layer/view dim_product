@@ -1,0 +1,158 @@
+-- --------------------------------------------------
+-- GOLD LAYER: Product Object
+-- --------------------------------------------------
+-- Goal:
+-- Create a consolidated Product Object using Silver Layer sources.
+-- Join product information with category metadata, remove historical
+-- records if not required, ensure uniqueness of product keys,
+-- and apply business-friendly column names.
+-- --------------------------------------------------
+
+-- STEP 1: Base Join - Connect product info to product category details
+-- Tables involved:
+--   - silver.crm_prd_info (Product Master)
+--   - silver.erp_px_cat_g1v2 (Category Metadata)
+
+SELECT
+    pi.prd_id,
+    pi.cat_id,
+    pi.prd_key,
+    pi.prd_nm,
+    pi.prd_cost,
+    pi.prd_line,
+    pi.prd_start_dt,
+    pi.prd_end_dt,
+    cg.cat,
+    cg.subcat,
+    cg.maintenance
+FROM silver.crm_prd_info pi
+LEFT JOIN silver.erp_px_cat_g1v2 cg
+    ON pi.cat_id = cg.id;
+
+
+-- STEP 2: Check for duplicate product keys
+-- Product keys are assumed to be the business identifier.
+-- This check highlights whether we need to de-duplicate or filter data.
+
+SELECT prd_key, COUNT(*) AS record_count
+FROM (
+    SELECT
+        pi.prd_id,
+        pi.prd_key,
+        pi.prd_nm,
+        pi.cat_id,
+        cg.cat,
+        cg.subcat,
+        cg.maintenance,
+        pi.prd_cost,
+        pi.prd_line,
+        pi.prd_start_dt
+    FROM silver.crm_prd_info pi
+    LEFT JOIN silver.erp_px_cat_g1v2 cg
+        ON pi.cat_id = cg.id
+    WHERE prd_end_dt IS NULL
+) sub
+GROUP BY prd_key
+HAVING COUNT(*) > 1;
+
+
+-- STEP 3: Filter to only current/active products
+-- If historical product data is not needed, we exclude products with a non-null end date.
+
+SELECT
+    pi.prd_id,
+    pi.cat_id,
+    pi.prd_key,
+    pi.prd_nm,
+    pi.prd_cost,
+    pi.prd_line,
+    pi.prd_start_dt,
+    cg.cat,
+    cg.subcat,
+    cg.maintenance
+FROM silver.crm_prd_info pi
+LEFT JOIN silver.erp_px_cat_g1v2 cg
+    ON pi.cat_id = cg.id
+WHERE pi.prd_end_dt IS NULL;
+
+
+-- STEP 4: Select only the relevant fields in a grouped & tidy format
+-- Dropping the prd_end_dt column and keeping only active fields
+
+SELECT
+    pi.prd_id,
+    pi.prd_key,
+    pi.prd_nm,
+    pi.cat_id,
+    cg.cat,
+    cg.subcat,
+    cg.maintenance,
+    pi.prd_cost,
+    pi.prd_line,
+    pi.prd_start_dt
+FROM silver.crm_prd_info pi
+LEFT JOIN silver.erp_px_cat_g1v2 cg
+    ON pi.cat_id = cg.id
+WHERE pi.prd_end_dt IS NULL;
+
+
+-- STEP 5: Apply business-friendly (human-readable) column aliases
+
+SELECT
+    pi.prd_id                       AS product_id,
+    pi.prd_key                      AS product_number,
+    pi.prd_nm                       AS product_name,
+    pi.cat_id                       AS category_id,
+    cg.cat                          AS category,
+    cg.subcat                       AS subcategory,
+    cg.maintenance,
+    pi.prd_cost                     AS cost,
+    pi.prd_line                     AS product_line,
+    pi.prd_start_dt                 AS start_date
+FROM silver.crm_prd_info pi
+LEFT JOIN silver.erp_px_cat_g1v2 cg
+    ON pi.cat_id = cg.id
+WHERE pi.prd_end_dt IS NULL;
+
+
+-- STEP 6: Add Surrogate Key
+-- Create product_key using ROW_NUMBER() for use in dimensional models (surrogate key)
+
+SELECT
+    ROW_NUMBER() OVER (ORDER BY pi.prd_start_dt, pi.prd_key) AS product_key,
+    pi.prd_id                       AS product_id,
+    pi.prd_key                      AS product_number,
+    pi.prd_nm                       AS product_name,
+    pi.cat_id                       AS category_id,
+    cg.cat                          AS category,
+    cg.subcat                       AS subcategory,
+    cg.maintenance,
+    pi.prd_cost                     AS cost,
+    pi.prd_line                     AS product_line,
+    pi.prd_start_dt                 AS start_date
+FROM silver.crm_prd_info pi
+LEFT JOIN silver.erp_px_cat_g1v2 cg
+    ON pi.cat_id = cg.id
+WHERE pi.prd_end_dt IS NULL;
+
+
+-- STEP 7: Create the final Gold View for downstream consumption
+-- View: gold.dim_products
+
+CREATE OR REPLACE VIEW gold.dim_products AS
+SELECT
+    ROW_NUMBER() OVER (ORDER BY pi.prd_start_dt, pi.prd_key) AS product_key,
+    pi.prd_id                       AS product_id,
+    pi.prd_key                      AS product_number,
+    pi.prd_nm                       AS product_name,
+    pi.cat_id                       AS category_id,
+    cg.cat                          AS category,
+    cg.subcat                       AS subcategory,
+    cg.maintenance,
+    pi.prd_cost                     AS cost,
+    pi.prd_line                     AS product_line,
+    pi.prd_start_dt                 AS start_date
+FROM silver.crm_prd_info pi
+LEFT JOIN silver.erp_px_cat_g1v2 cg
+    ON pi.cat_id = cg.id
+WHERE pi.prd_end_dt IS NULL;
